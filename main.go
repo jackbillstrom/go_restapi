@@ -2,114 +2,123 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
+	"io/ioutil"
 	"log"
-	"math/rand"
 	"net/http"
-	"strconv"
+	"os"
 
+	"github.com/gorilla/handlers"
 	"github.com/gorilla/mux"
+	"github.com/jinzhu/gorm"
+	_ "github.com/jinzhu/gorm/dialects/mssql"
 )
 
-// Book struct (Model)
-type Book struct {
-	ID     string  `json:"id"`
-	Isbn   string  `json:"isbn"`
-	Title  string  `json:"title"`
-	Author *Author `json:"author"`
+type Contract struct {
+	gorm.Model
+	Title       string    `json:"title"`
+	CompanyName string    `json:"company_name"`
+	CompanyID   int       `json:"company_id"`
+	Period      string    `json:"period"`
+	Reciever    Reciever  `gorm:"embedded" json:"reciever`
+	Sender      Sender    `gorm:"embedded" json:"sender`
+	Description string    `gorm:"type:text" json:"description"`
+	Products    []Product `gorm:"many2many:contract_products"  json:"products"`
 }
 
-// Author struct
-type Author struct {
-	Firstname string `json:"firstname"`
-	Lastname  string `json:"lastname"`
+type Product struct {
+	gorm.Model
+	Name        string `json:"name"`
+	Comment     string `json:"comment"`
+	Value       string `json:"value"`
+	Period      string `json:"period"`
+	Description string `json:"description"`
 }
 
-// Init books var as a slice Book struct
-var books []Book
-
-// Get all books
-func getBooks(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(books)
+type Reciever struct {
+	RecieverUserID string `json:"user_id"`
+	RecieverName   string `json:"name"`
+	RecieverPhone  string `json:"phone"`
+	RecieverEmail  string `json:"email"`
 }
 
-// Get single book
-func getBook(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	params := mux.Vars(r) // Gets params
-	// Loop through books and find one with the id from the params
-	for _, item := range books {
-		if item.ID == params["id"] {
-			json.NewEncoder(w).Encode(item)
-			return
-		}
+type Sender struct {
+	SenderUserID string `json:"user_id"`
+	SenderName   string `json:"name"`
+	SenderPhone  string `json:"phone"`
+	SenderEmail  string `json:"email"`
+}
+
+func Migration() {
+	db, err := gorm.Open("mssql", "sqlserver://jack:Q29ndavr@Gby+Ve@ampilio.database.windows.net:1433?database=ampilio-hive")
+	if err != nil {
+		fmt.Println(err.Error())
+		panic("Failed to  connect")
 	}
-	json.NewEncoder(w).Encode(&Book{})
+	defer db.Close()
+
+	db.AutoMigrate(&Contract{}, &Product{})
 }
 
-// Add new book
-func createBook(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	var book Book
-	_ = json.NewDecoder(r.Body).Decode(&book)
-	book.ID = strconv.Itoa(rand.Intn(100000000)) // Mock ID - not safe
-	books = append(books, book)
-	json.NewEncoder(w).Encode(book)
-}
-
-// Update book
-func updateBook(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	params := mux.Vars(r)
-	for index, item := range books {
-		if item.ID == params["id"] {
-			books = append(books[:index], books[index+1:]...)
-			var book Book
-			_ = json.NewDecoder(r.Body).Decode(&book)
-			book.ID = params["id"]
-			books = append(books, book)
-			json.NewEncoder(w).Encode(book)
-			return
-		}
+func All(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	db, err := gorm.Open("mssql", "sqlserver://jack:Q29ndavr@Gby+Ve@ampilio.database.windows.net:1433?database=ampilio-hive")
+	if err != nil {
+		panic("Could not connect to DB")
 	}
+	defer db.Close()
+
+	var contracts []Contract
+	db.Find(&contracts)
+	// products := []Product{}
+	// db.Preload("Contracts").Find(&)
+	// db.Model(&contract).Association("Products")
+	json.NewEncoder(w).Encode(contracts)
 }
 
-// Delete book
-func deleteBook(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	params := mux.Vars(r)
-	for index, item := range books {
-		if item.ID == params["id"] {
-			books = append(books[:index], books[index+1:]...)
-			break
-		}
+func Create(w http.ResponseWriter, r *http.Request) {
+	// Set CORS headers for the main request.
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	var contract Contract
+	decoder := json.NewDecoder(r.Body).Decode(&contract)
+	db, err := gorm.Open("mssql", "sqlserver://jack:Q29ndavr@Gby+Ve@ampilio.database.windows.net:1433?database=ampilio-hive")
+	if err != nil {
+		panic("Could not connect to DB")
 	}
-	json.NewEncoder(w).Encode(books)
+	defer db.Close()
+
+	fmt.Println(decoder)
+
+	// var contract Contract
+	// err = decoder.Decode(&contract)
+	// if err != nil {
+	// 	panic(err)
+	// }
+
+	data, err := ioutil.ReadAll(r.Body)
+	if err != nil {
+		panic(err)
+	}
+
+	defer r.Body.Close()
+	json.Unmarshal(data, &contract)
+	db.Create(&contract)
+	fmt.Fprintf(w, "Kontraktet skapades")
 }
 
-// Main function
+func handleRequests() {
+	_router := mux.NewRouter().StrictSlash(true)
+	// Default
+	_router.HandleFunc("/", All).Methods("GET")
+	_router.HandleFunc("/", Create).Methods("POST")
+	log.Fatal(http.ListenAndServe(":"+os.Getenv("PORT"), handlers.CORS(handlers.AllowedHeaders([]string{"X-Requested-With", "Content-Type", "Authorization"}), handlers.AllowedMethods([]string{"GET", "POST", "PUT", "HEAD", "OPTIONS"}), handlers.AllowedOrigins([]string{"*"}))(_router)))
+}
+
 func main() {
-	// Init router
-	r := mux.NewRouter()
+	fmt.Println("= API initieraSsss  🐍  på = " + os.Getenv("PORT"))
 
-	// Hardcoded data - @todo: add database
-	books = append(books, Book{ID: "1", Isbn: "438227", Title: "Book One", Author: &Author{Firstname: "John", Lastname: "Doe"}})
-	books = append(books, Book{ID: "2", Isbn: "454555", Title: "Book Two", Author: &Author{Firstname: "Steve", Lastname: "Smith"}})
+	fmt.Println("= Migration structs into tables")
+	Migration()
 
-	// Route handles & endpoints
-	r.HandleFunc("/books", getBooks).Methods("GET")
-	r.HandleFunc("/books/{id}", getBook).Methods("GET")
-	r.HandleFunc("/books", createBook).Methods("POST")
-	r.HandleFunc("/books/{id}", updateBook).Methods("PUT")
-	r.HandleFunc("/books/{id}", deleteBook).Methods("DELETE")
-
-	// Start server
-	log.Fatal(http.ListenAndServe(":8000", r))
+	handleRequests()
 }
-
-// Request sample
-// {
-// 	"isbn":"4545454",
-// 	"title":"Book Three",
-// 	"author":{"firstname":"Harry","lastname":"White"}
-// }
